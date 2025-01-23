@@ -82,17 +82,23 @@ void unsubscribe(TQueue *queue, pthread_t thread) {
     pthread_mutex_lock(&queue->mutex);
 
     Subscriber *sub = queue->subscribers_head;
+    int index = 0;
     if (!sub) {
         pthread_mutex_unlock(&queue->mutex);
         return;
     }
+
     if (pthread_equal(sub->thread, thread)) {
+        index = queue->size - sub->new_messages;
+
         queue->subscribers_head = sub->next;
         free(sub);
         queue->subscriber_count--;
     } else {
         while (sub->next != NULL) {
             if (pthread_equal(sub->next->thread, thread)) {
+                index = queue->size - sub->new_messages;
+
                 Subscriber *next = sub->next->next;
                 free(sub->next);
                 sub->next = next;
@@ -103,11 +109,36 @@ void unsubscribe(TQueue *queue, pthread_t thread) {
         }
     }
 
+    Message* message = queue->messages_head;
+
+    for (int i = 0; i < queue->size; i++) {
+        if (i >= index) {
+            message->undelivered--;
+            if (message->undelivered == 0) {
+                Message* to_remove = message;
+                queue->messages_head = message->next;
+                message = queue->messages_head;
+                free(to_remove);
+
+                queue->size--;
+            } else {
+                message = message->next;
+            }
+        } else {
+            message = message->next;
+        }
+    }
+
     pthread_mutex_unlock(&queue->mutex);
 }
 
 void addMsg(TQueue *queue, void *msg) {
     pthread_mutex_lock(&queue->mutex);
+
+    if (queue->subscriber_count == 0) {
+        pthread_mutex_unlock(&queue->mutex);
+        return;
+    }
 
     while (queue->size == queue->capacity) {
         pthread_cond_wait(&queue->not_full, &queue->mutex);

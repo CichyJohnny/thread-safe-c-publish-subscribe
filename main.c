@@ -163,6 +163,67 @@ bool unsubscribeTest() {
     return true;
 }
 
+bool messagesAfterUnsubscribe() {
+    TQueue *queue = createQueue(10);
+
+    int *msg1 = malloc(sizeof(int));
+    *msg1 = 10;
+    addMsg(queue, msg1);
+
+    if (queue->size != 0) {
+        printf("1\n");
+        destroyQueue(queue);
+        free(msg1);
+        return false;
+    }
+
+    pthread_t thread1;
+    subscribe(queue, thread1);
+
+    addMsg(queue, msg1);
+
+    unsubscribe(queue, thread1);
+
+    if (queue->size != 0) {
+        printf("2\n");
+        destroyQueue(queue);
+        free(msg1);
+        return false;
+    }
+
+    pthread_t thread2, thread3;
+    subscribe(queue, thread1);
+    subscribe(queue, thread2);
+
+    addMsg(queue, msg1);
+    addMsg(queue, msg1);
+    addMsg(queue, msg1);
+
+    getMsg(queue, thread2);
+    getMsg(queue, thread2);
+
+    if (queue->size != 3 || getAvailable(queue, thread1) != 3 || getAvailable(queue, thread2) != 1) {
+        printf("3\n");
+        destroyQueue(queue);
+        free(msg1);
+        return false;
+    }
+
+    unsubscribe(queue, thread1);
+
+    if (queue->size != 1 || getAvailable(queue, thread2) != 1) {
+        printf("4\n");
+        destroyQueue(queue);
+        free(msg1);
+        return false;
+    }
+
+    destroyQueue(queue);
+    free(msg1);
+
+    return true;
+}
+
 bool unsubscribeFromEmptyTest() {
     TQueue *queue = createQueue(10);
     unsubscribe(queue, pthread_self());
@@ -669,6 +730,27 @@ bool increaseSetSizeTest() {
     return true;
 }
 
+void* deadLockTest_sender(void* args) {
+    TQueue *queue = (TQueue*)args;
+
+    int *msg1 = malloc(sizeof(int));
+    *msg1 = 10;
+
+    usleep(1000);
+    printf("sending\n");
+    addMsg(queue, msg1);
+    printf("sent\n");
+}
+
+void* deadLockTest_subscriber(void* args) {
+    TQueue *queue = (TQueue*)args;
+    subscribe(queue, pthread_self());
+
+    printf("receiving\n");
+    getMsg(queue, pthread_self());
+    printf("received\n");
+}
+
 int main() {
     if (!initTest()) {
         printf("initTest failed\n");
@@ -695,6 +777,11 @@ int main() {
         return 1;
     }
     printf("unsubscribeTest passed\n");
+    if (!messagesAfterUnsubscribe()) {
+        printf("messagesAfterUnsubscribe failed\n");
+        return 1;
+    }
+    printf("messagesAfterUnsubscribe passed\n");
     if (!unsubscribeFromEmptyTest()) {
         printf("unsubscribeFromEmptyTest failed\n");
         return 1;
@@ -745,10 +832,6 @@ int main() {
         return 1;
     }
     printf("increaseSetSizeTest passed\n");
-    if (!increaseSetSizeTest()) {
-        printf("increaseSetSizeTest failed\n");
-        return 1;
-    }
-
+    
     return 0;
 }
