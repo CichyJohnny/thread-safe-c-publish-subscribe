@@ -3,6 +3,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <semaphore.h>
+#include <signal.h>
 #include "queue.h"
 
 void *initTest(void *) {
@@ -118,7 +119,7 @@ void *singleSubscriberMultipleMessagesSingleReceivedTest(void *) {
 void *multipleSubscribersSingleMessageTest(void *) {
     bool *success = malloc(sizeof(bool));
     *success = true;
-    
+
     int size = 10;
     TQueue *queue =createQueue(size);
 
@@ -352,8 +353,7 @@ void *sender(void *args) {
 }
 
 void *subscriber(void *args) {
-    pthread_t thread = pthread_self();
-    subscribe(args, thread);
+    subscribe(args, pthread_self());
 
     char* result = malloc(sizeof(char) * 11);
     for (int i = 0; i < 10; i++) {
@@ -361,7 +361,7 @@ void *subscriber(void *args) {
     }
 
     for (int i = 0; i < 10; i++) {
-        char* msg = getMsg(args, thread);
+        char* msg = getMsg(args, pthread_self());
         strcat(result, msg);
     }
     strcat(result, "\0");
@@ -384,7 +384,6 @@ void *parallelSenderSubscriberTest(void *) {
     char *result;
     pthread_join(*subscriberThread, (void**)&result);
 
-    printf("result: %s\n", result);
     *success = strcmp(result, "0123456789") == 0;
 
     destroyQueue(queue);
@@ -460,32 +459,53 @@ void *parallelSenderSubscribersTest(void *) {
 }
 
 typedef struct {
-    long double arr[1000][1000][100];
+    pthread_mutex_t* mutex;
+    TQueue *queue;
+} SenderArgs;
+
+const unsigned long int threshold = 0xFF;
+
+typedef struct {
+    long double arr[1000][100][10];
 } BigMemoryChunk;
 
-const unsigned long int threshold = 0xFFF;
 void *senderBigMemory(void *args) {
+    SenderArgs *senderArgs = args;
+    for (int i = 0; i < 5; i++) pthread_mutex_lock(&senderArgs->mutex[i]);
+
     for (unsigned long int i = 0; i < threshold; i++)
-        addMsg(args, malloc(sizeof(BigMemoryChunk)));
+        addMsg(senderArgs->queue, malloc(sizeof(BigMemoryChunk)));
 
     return NULL;
 }
 
+typedef struct {
+    pthread_mutex_t* mutex;
+    TQueue *queue;
+} SubscriberArgs;
 void *subscriberBigMemory(void *args) {
-    subscribe(args, pthread_self());
+    SubscriberArgs *subscriberArgs = args;
+    subscribe(subscriberArgs->queue, pthread_self());
+    pthread_mutex_unlock(subscriberArgs->mutex);
 
     for (unsigned long int i = 0; i < threshold; i++)
-        getMsg(args, pthread_self());
+        getMsg(subscriberArgs->queue, pthread_self());
+
+    unsubscribe(subscriberArgs->queue, pthread_self());
 
     return NULL;
 }
 
 void *garbageCollector(void *args) {
-    subscribe(args, pthread_self());
+    SubscriberArgs *subscriberArgs = args;
+    subscribe(subscriberArgs->queue, pthread_self());
+    pthread_mutex_unlock(subscriberArgs->mutex);
 
     for (unsigned long int i = 0; i < threshold; i++)
-        free(getMsg(args, pthread_self()));
+        free(getMsg(subscriberArgs->queue, pthread_self()));
 
+
+    unsubscribe(subscriberArgs->queue, pthread_self());
     return NULL;
 }
 
@@ -493,29 +513,157 @@ void *memoryLeakTest(void *) {
     bool *success = malloc(sizeof(bool));
     *success = true;
 
+    pthread_mutex_t mutex[5];
+    for (int i = 0; i < 5; i++) {
+        pthread_mutex_init(&mutex[i], NULL);
+        pthread_mutex_lock(&mutex[i]);
+    }
+
     TQueue *queue = createQueue(5);
 
+    SubscriberArgs *subscriberArgs = malloc(sizeof(SubscriberArgs));
+    subscriberArgs->queue = queue;
+    subscriberArgs->mutex = &mutex[0];
+
     pthread_t* subscriberThread = malloc(sizeof(pthread_t));
-    pthread_create(subscriberThread, NULL, subscriberBigMemory, queue);
+    if (pthread_create(subscriberThread, NULL, subscriberBigMemory, subscriberArgs))  {
+        pthread_cancel(*subscriberThread);
+
+        free(subscriberThread);
+
+        destroyQueue(queue);
+
+        *success = false;
+        return success;
+    }
+
+    SubscriberArgs *subscriber0Args = malloc(sizeof(SubscriberArgs));
+    subscriber0Args->queue = queue;
+    subscriber0Args->mutex = &mutex[1];
 
     pthread_t* subscriberThread0 = malloc(sizeof(pthread_t));
-    pthread_create(subscriberThread0, NULL, subscriberBigMemory, queue);
+    if (pthread_create(subscriberThread0, NULL, subscriberBigMemory, subscriber0Args)) {
+        pthread_cancel(*subscriberThread);
+
+        free(subscriberThread);
+        free(subscriberThread0);
+
+        destroyQueue(queue);
+
+        *success = false;
+        return success;
+    }
+
+    SubscriberArgs *subscriber1Args = malloc(sizeof(SubscriberArgs));
+    subscriber1Args->queue = queue;
+    subscriber1Args->mutex = &mutex[2];
 
     pthread_t* subscriberThread1 = malloc(sizeof(pthread_t));
-    pthread_create(subscriberThread1, NULL, subscriberBigMemory, queue);
+    if (pthread_create(subscriberThread1, NULL, subscriberBigMemory, subscriber1Args)) {
+        pthread_cancel(*subscriberThread);
+        pthread_cancel(*subscriberThread0);
+
+        free(subscriberThread);
+        free(subscriberThread0);
+        free(subscriberThread1);
+
+        destroyQueue(queue);
+
+        *success = false;
+        return success;
+    }
+
+    SubscriberArgs *subscriber2Args = malloc(sizeof(SubscriberArgs));
+    subscriber2Args->queue = queue;
+    subscriber2Args->mutex = &mutex[3];
 
     pthread_t* subscriberThread2 = malloc(sizeof(pthread_t));
-    pthread_create(subscriberThread2, NULL, subscriberBigMemory, queue);
+    if (pthread_create(subscriberThread2, NULL, subscriberBigMemory, subscriber2Args)) {
+        pthread_cancel(*subscriberThread);
+        pthread_cancel(*subscriberThread0);
+        pthread_cancel(*subscriberThread1);
+
+        free(subscriberThread);
+        free(subscriberThread0);
+        free(subscriberThread1);
+        free(subscriberThread2);
+
+        destroyQueue(queue);
+
+        *success = false;
+        return success;
+    }
+
+    SubscriberArgs *subscriber3Args = malloc(sizeof(SubscriberArgs));
+    subscriber3Args->queue = queue;
+    subscriber3Args->mutex = &mutex[4];
 
     pthread_t* garbageCollectorThread = malloc(sizeof(pthread_t));
-    pthread_create(garbageCollectorThread, NULL, garbageCollector, queue);
+    if (pthread_create(garbageCollectorThread, NULL, garbageCollector, subscriber3Args)) {
+        pthread_cancel(*subscriberThread);
+        pthread_cancel(*subscriberThread0);
+        pthread_cancel(*subscriberThread1);
+        pthread_cancel(*subscriberThread2);
 
+        free(subscriberThread);
+        free(subscriberThread0);
+        free(subscriberThread1);
+        free(subscriberThread2);
+        free(garbageCollectorThread);
+
+        destroyQueue(queue);
+
+        *success = false;
+        return success;
+    }
+
+    SenderArgs *senderArgs = malloc(sizeof(SenderArgs));
+    senderArgs->queue = queue;
+    senderArgs->mutex = mutex;
     pthread_t* senderThread = malloc(sizeof(pthread_t));
-    pthread_create(senderThread, NULL, senderBigMemory, queue);
+    if (pthread_create(senderThread, NULL, senderBigMemory, senderArgs)) {
+        pthread_cancel(*subscriberThread);
+        pthread_cancel(*subscriberThread0);
+        pthread_cancel(*subscriberThread1);
+        pthread_cancel(*subscriberThread2);
+        pthread_cancel(*garbageCollectorThread);
 
+        free(senderThread);
+        free(subscriberThread);
+        free(subscriberThread0);
+        free(subscriberThread1);
+        free(subscriberThread2);
+        free(garbageCollectorThread);
+
+        destroyQueue(queue);
+
+        *success = false;
+        return success;
+    }
     pthread_join(*senderThread, NULL);
+
+    pthread_join(*subscriberThread, NULL);
+
+    pthread_join(*subscriberThread0, NULL);
+
+    pthread_join(*subscriberThread1, NULL);
+
+    pthread_join(*subscriberThread2, NULL);
+
     pthread_join(*garbageCollectorThread, NULL);
 
+    destroyQueue(queue);
+
+    for (int i = 0; i < 5; i++)
+        pthread_mutex_destroy(&mutex[i]);
+
+    free(senderArgs);
+    free(subscriberArgs);
+    free(subscriber0Args);
+    free(subscriber1Args);
+    free(subscriber2Args);
+    free(subscriber3Args);
+    
     free(senderThread);
     free(subscriberThread);
     free(subscriberThread0);
@@ -523,11 +671,31 @@ void *memoryLeakTest(void *) {
     free(subscriberThread2);
     free(garbageCollectorThread);
 
-    destroyQueue(queue);
-
     return success;
 }
 
+void *unsubscribeTest(void*) {
+    TQueue* queue = createQueue(10);
+    pthread_t* thread = malloc(sizeof(pthread_t));
+    pthread_create(thread, NULL, threadBusyWait, NULL);
+    subscribe(queue, *thread);
+    int *msg = malloc(sizeof(int));
+    *msg = 10;
+    addMsg(queue, msg);
+    bool *success = malloc(sizeof(bool));
+    *success = getAvailable(queue, *thread) == 1;
+
+    unsubscribe(queue, *thread);
+    *success = getAvailable(queue, *thread) == 0 && success;
+
+    destroyQueue(queue);
+
+    pthread_cancel(*thread);
+    free(thread);
+    free(msg);
+
+    return success;
+}
 
 int main() {
     /*
@@ -591,6 +759,9 @@ int main() {
     pthread_t t8;
     pthread_create(&t8, NULL, memoryLeakTest, NULL);
 
+    pthread_t t9;
+    pthread_create(&t9, NULL, unsubscribeTest, NULL);
+
     bool *result7;
     pthread_join(t7, (void**)&result7);
     printf("parallelSenderSubscribersTest: %s\n", *result7 ? "success" : "failed");
@@ -598,6 +769,10 @@ int main() {
     bool *result8;
     pthread_join(t8, (void**)&result8);
     printf("memoryLeakTest: %s\n", *result8 ? "success" : "failed");
+
+    bool *result9;
+    pthread_join(t9, (void**)&result9);
+    printf("unsubscribeTest: %s\n", *result9 ? "success" : "failed");
 
     return 0;
 }

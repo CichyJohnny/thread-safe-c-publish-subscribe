@@ -10,31 +10,30 @@
 #include <pthread.h>
 #include <stdbool.h>
 
-#define MAX_SUBSCRIBERS 64
 
 
-typedef struct {
+typedef struct Message {
     void *data;
-    bool delivered[MAX_SUBSCRIBERS];
+    int undelivered;
+    struct Message* next;
 } Message;
 
 
-typedef struct {
+typedef struct Subscriber {
     pthread_t thread;
     int read_position;
     int new_messages;
-
-    Subscriber* next;
+    struct Subscriber* next;
 } Subscriber;
 
 // Struktura kolejki
-typedef struct {
+typedef struct TQueue {
     Message *messages;
     int capacity;
     int size;
     int head;
     int tail;
-    Subscriber *subscribers;
+    Subscriber *subscribers_head;
     int subscriber_count;
     pthread_mutex_t mutex;
     pthread_cond_t not_full;
