@@ -95,19 +95,23 @@ bool subscribeSelfTwice() {
     subscribe(queue, pthread_self());
 
     if (queue->subscriber_count != 1) {
+        printf("1\n");
         destroyQueue(queue);
         return false;
     }
 
     if (queue->subscribers_head == NULL) {
+        printf("2\n");
         destroyQueue(queue);
         return false;
     }
     if (queue->subscribers_head->thread != pthread_self()) {
+        printf("3\n");
         destroyQueue(queue);
         return false;
     }
     if (queue->subscribers_head->next != NULL) {
+        printf("4\n");
         destroyQueue(queue);
         return false;
     }
@@ -159,6 +163,13 @@ bool unsubscribeTest() {
     return true;
 }
 
+bool unsubscribeFromEmptyTest() {
+    TQueue *queue = createQueue(10);
+    unsubscribe(queue, pthread_self());
+
+    return true;
+}
+
 bool addMsgTest() {
     TQueue *queue = createQueue(10);
     subscribe(queue, pthread_self());
@@ -171,22 +182,12 @@ bool addMsgTest() {
         free(msg);
         return false;
     }
-    if (queue->head != 0) {
+    if (queue->messages_head[0].data != msg) {
         destroyQueue(queue);
         free(msg);
         return false;
     }
-    if (queue->tail != 1) {
-        destroyQueue(queue);
-        free(msg);
-        return false;
-    }
-    if (queue->messages[0].data != msg) {
-        destroyQueue(queue);
-        free(msg);
-        return false;
-    }
-    if (queue->messages[0].undelivered != queue->subscriber_count) {
+    if (queue->messages_head[0].undelivered != queue->subscriber_count) {
         destroyQueue(queue);
         free(msg);
         return false;
@@ -264,9 +265,8 @@ bool overflowTest() {
     pthread_create(&sender, NULL, overflowTest_sender, queue);
 
     usleep(1000);
-    if (queue->size != 1 || queue->head != 0 || queue->tail != 0) {
+    if (queue->size != 1) {
         printf("1\n");
-        printf("%d\n", queue->size != 1 || queue->head != 0 || queue->tail != 0);
         destroyQueue(queue);
         return false;
     }
@@ -275,7 +275,7 @@ bool overflowTest() {
         destroyQueue(queue);
         return false;
     }
-    if (queue->messages[0].undelivered != queue->subscriber_count) {
+    if (queue->messages_head->undelivered != queue->subscriber_count) {
         printf("3\n");
         destroyQueue(queue);
         return false;
@@ -284,17 +284,18 @@ bool overflowTest() {
     int *msg = (int*)getMsg(queue, pthread_self());
 
     usleep(1000);
-    if (queue->size != 1 || queue->head != 0 || queue->tail != 0) {
+    if (queue->size != 1) {
         printf("4\n");
         destroyQueue(queue);
         return false;
     }
     if (getAvailable(queue, pthread_self()) != 1) {
         printf("5\n");
+        printf("%d\n", getAvailable(queue, pthread_self()));
         destroyQueue(queue);
         return false;
     }
-    if (queue->messages[0].undelivered != queue->subscriber_count) {
+    if (queue->messages_head[0].undelivered != queue->subscriber_count) {
         printf("6\n");
         destroyQueue(queue);
         return false;
@@ -308,7 +309,7 @@ bool overflowTest() {
     msg = (int*)getMsg(queue, pthread_self());
 
     usleep(1000);
-    if (queue->size != 1 || queue->head != 0 || queue->tail != 0) {
+    if (queue->size != 1) {
         printf("8\n");
         destroyQueue(queue);
         return false;
@@ -318,7 +319,7 @@ bool overflowTest() {
         destroyQueue(queue);
         return false;
     }
-    if (queue->messages[0].undelivered != queue->subscriber_count) {
+    if (queue->messages_head[0].undelivered != queue->subscriber_count) {
         printf("10\n");
         destroyQueue(queue);
         return false;
@@ -328,11 +329,10 @@ bool overflowTest() {
         destroyQueue(queue);
         return false;
     }
-
     msg = (int*)getMsg(queue, pthread_self());
 
     usleep(1000);
-    if (queue->size != 0 || queue->head != 0 || queue->tail != 0) {
+    if (queue->size != 0) {
         printf("12\n");
         destroyQueue(queue);
         return false;
@@ -428,7 +428,7 @@ void *multipleReceiverTest_senderWithDelay(void* args) {
     for (int i = 0; i<10; i++) {
         msgs[i] = (i + 1) * 10;
         usleep(10000);
-        addMsg(queue, msgs[i]);
+        addMsg(queue, (void *)(intptr_t)msgs[i]);
     }
 
     return msgs;
@@ -441,7 +441,7 @@ void *multipleReceiverTest_sender(void* args) {
     int *msgs = malloc(10 * sizeof(int));
     for (int i = 0; i<10; i++) {
         msgs[i] = (i + 1) * 10;
-        addMsg(queue, msgs[i]);
+        addMsg(queue, (void*)(intptr_t)msgs[i]);
     }
 
     return msgs;
@@ -453,7 +453,7 @@ void *multipleReceiverTest_receiver(void* args) {
 
     int *msgs = malloc(10 * sizeof(int));
     for (int i = 0; i<10; i++) {
-        msgs[i] = getMsg(queue, pthread_self());
+        msgs[i] = (int)(intptr_t)getMsg(queue, pthread_self());
     }
 
     return msgs;
@@ -465,7 +465,7 @@ void *multipleReceiverTest_receiverWithDelay(void* args) {
     int *msgs = malloc(10 * sizeof(int));
     for (int i = 0; i<10; i++) {        
         usleep(10000);
-        msgs[i] = getMsg(queue, pthread_self());
+        msgs[i] = (int)(intptr_t)getMsg(queue, pthread_self());
     }
 
     return msgs;
@@ -562,7 +562,6 @@ bool decreaseSetSize() {
     int *msg3 = malloc(sizeof(int));
     *msg3 = 30;
 
-
     subscribe(queue, thread1);
     addMsg(queue, msg1);
 
@@ -570,20 +569,7 @@ bool decreaseSetSize() {
     addMsg(queue, msg2);
     addMsg(queue, msg3);
 
-    printf("\n\n");
-    int *aa = (int*)getMsg(queue, thread1);
-    printf("first: %d\n", *aa);
-    printf("avaible1: %d\n", getAvailable(queue, thread1));
-    printf("avaible2: %d\n", getAvailable(queue, thread2));
-    setSize(queue, 2);
-    printf("avaible1: %d\n", getAvailable(queue, thread1));
-    printf("avaible2: %d\n", getAvailable(queue, thread2));
-    int *bb = (int*)getMsg(queue, thread1);
-    printf("%d\n", *bb);
-    int *cc = (int*)getMsg(queue, thread1);
-    printf("%d\n", *cc);
-
-    if (getAvailable(queue, thread1) != 3 || getAvailable(queue, thread2) != 2) {
+    if (queue->size != 3 || getAvailable(queue, thread1) != 3 || getAvailable(queue, thread2) != 2) {
         printf("1\n");
         free(msg1);
         free(msg2);
@@ -591,7 +577,10 @@ bool decreaseSetSize() {
         destroyQueue(queue);
         return false;
     }
-    if (queue->size != 3 || queue->head != 0 || queue->tail != 3) {
+
+    setSize(queue, 1);
+
+    if (queue->size != 1 || getAvailable(queue, thread1) != 1 || getAvailable(queue, thread1) != 1) {
         printf("2\n");
         free(msg1);
         free(msg2);
@@ -599,10 +588,10 @@ bool decreaseSetSize() {
         destroyQueue(queue);
         return false;
     }
-    printf("change size\n");
-    setSize(queue, 1);
-    printf("changed size\n");
-    if (getAvailable(queue, thread1) != 1 || getAvailable(queue, thread1) != 1) {
+    int *aa = (int*)getMsg(queue, thread1);
+    int *bb = (int*)getMsg(queue, thread2);
+
+    if (*aa != 30 || *bb != 30) {
         printf("3\n");
         free(msg1);
         free(msg2);
@@ -610,8 +599,7 @@ bool decreaseSetSize() {
         destroyQueue(queue);
         return false;
     }
-    printf("2.1 done\n");
-    if (queue->size != 1 || queue->head != 2 || queue->tail != 3) {
+    if (queue->size != 0 || getAvailable(queue, thread1) != 0 || getAvailable(queue, thread1) != 0) {
         printf("4\n");
         free(msg1);
         free(msg2);
@@ -619,35 +607,6 @@ bool decreaseSetSize() {
         destroyQueue(queue);
         return false;
     }
-    printf("2.2 done\n");
-    printf("avaible: %d\n", getAvailable(queue, thread1));
-    printf("avaible: %d\n", getAvailable(queue, thread2));
-
-    printf("head: %d\n", queue->head);
-    printf("tail: %d\n", queue->tail);
-    printf("size: %d\n", queue->size);
-    printf("position: %d\n", queue->subscribers_head->read_position);    
-    // int *cc = (int*)getMsg(queue, thread1);
-    // printf("%d\n", *cc);
-
-    // printf("%d \n", *cc);
-    // if (*a != 30 || *b != 30) {
-    // if (*(int*)getMsg(queue, thread1) != 30 || *(int*)getMsg(queue, thread2) != 30) {
-    //     free(msg1);
-    //     free(msg2);
-    //     free(msg3);
-    //     destroyQueue(queue);
-    //     return false;
-    // }
-    printf("2.3 done\n");
-    if (queue->size != 0 || queue->head != 3 || queue->tail != 3) {
-        free(msg1);
-        free(msg2);
-        free(msg3);
-        destroyQueue(queue);
-        return false;
-    }
-    printf("2.4 done\n");
 
     free(msg1);
     free(msg2);
@@ -657,34 +616,54 @@ bool decreaseSetSize() {
     return true;
 }
 
-bool increaseSetSizeTest() {
-    TQueue *queue = createQueue(3);
+void *increaseSetSizeTest_sender(void *args) {
+    TQueue *queue = (TQueue *)args;
     subscribe(queue, pthread_self());
 
-    int *msgs = malloc(6*sizeof(int));
-    msgs[0], msgs[1], msgs[2], msgs[3], msgs[4], msgs[5] = 10, 20, 30, 40, 50, 60;
-    addMsg(queue, msgs[0]);
-    addMsg(queue, msgs[1]);
-    addMsg(queue, msgs[2]);
+    int *msg1 = malloc(sizeof(int));
+    *msg1 = 10;
+    int *msg2 = malloc(sizeof(int));
+    *msg2 = 20;
+    int *msg3 = malloc(sizeof(int));
+    *msg3 = 30;
+    addMsg(queue, msg1);
+    addMsg(queue, msg2);
+    addMsg(queue, msg3);
 
-    setSize(queue, 6);
-    if (queue->capacity != 6 || queue->head != 0 || queue->tail != 3) {
-        free(msgs);
-        destroyQueue(queue);
-        return false;
-    }
-    if (*(int*)getMsg(queue, pthread_self()) != 10 || *(int*)getMsg(queue, pthread_self()) != 20 || *(int*)getMsg(queue, pthread_self()) != 30) {
-        free(msgs);
-        destroyQueue(queue);
-        return false;
-    }
-    if (*(int*)getMsg(queue, pthread_self()) != 40 || *(int*)getMsg(queue, pthread_self()) != 50 || *(int*)getMsg(queue, pthread_self()) != 60) {
-        free(msgs);
+    usleep(1000);
+    free(msg1);
+    free(msg2);
+    free(msg3);
+}
+
+bool increaseSetSizeTest() {
+    TQueue *queue = createQueue(1);
+    subscribe(queue, pthread_self());
+    
+    pthread_t sender;
+    pthread_create(&sender, NULL, increaseSetSizeTest_sender, queue);
+
+    if(*(int*)getMsg(queue, pthread_self()) != 10) {
+        printf("2\n");
         destroyQueue(queue);
         return false;
     }
 
-    free(msgs);
+    setSize(queue, 3);
+
+    if (queue->capacity != 3) {
+        printf("3\n");
+        destroyQueue(queue);
+        return false;
+    }
+
+    int *aa = (int*)getMsg(queue, pthread_self());
+    int *bb = (int*)getMsg(queue, pthread_self());
+    if (*aa != 20 || *bb != 30) {
+        printf("4\n");
+        destroyQueue(queue);
+        return false;
+    }
     destroyQueue(queue);
 
     return true;
@@ -716,6 +695,11 @@ int main() {
         return 1;
     }
     printf("unsubscribeTest passed\n");
+    if (!unsubscribeFromEmptyTest()) {
+        printf("unsubscribeFromEmptyTest failed\n");
+        return 1;
+    }
+    printf("unsubscribeFromEmptyTest passed\n");
     if (!addMsgTest()) {
         printf("addMsgTest failed\n");
         return 1;

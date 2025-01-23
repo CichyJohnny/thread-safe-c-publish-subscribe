@@ -9,13 +9,11 @@
 
 TQueue *createQueue(int size) {
     TQueue *queue = (TQueue *)malloc(sizeof(TQueue));
-    queue->messages = (Message *)malloc(size * sizeof(Message));
+    queue->messages_head = NULL;
     queue->subscribers_head = NULL;
     
     queue->capacity = size;
     queue->size = 0;
-    queue->head = 0;
-    queue->tail = 0;
     queue->subscriber_count = 0;
 
     pthread_mutex_init(&queue->mutex, NULL);
@@ -30,36 +28,49 @@ void destroyQueue(TQueue *queue) {
     pthread_cond_destroy(&queue->not_full);
     pthread_cond_destroy(&queue->not_empty);
 
-    Subscriber *temp = queue->subscribers_head;
-    while (temp != NULL) {
-        Subscriber *next = temp->next;
-        free(temp);
-        temp = next;
+    Subscriber *sub = queue->subscribers_head;
+    while (sub != NULL) {
+        Subscriber *next = sub->next;
+        free(sub);
+        sub = next;
     }
 
-    free(queue->messages);
+    Message *mess = queue->messages_head;
+    while (mess != NULL) {
+        Message *next = mess->next;
+        free(mess);
+        mess = next;
+    }
+
     free(queue);
 }
 
 void subscribe(TQueue *queue, pthread_t thread) {
     pthread_mutex_lock(&queue->mutex);
 
-    Subscriber* temp = queue->subscribers_head;
-    if (temp == NULL) {
+    Subscriber* sub = queue->subscribers_head;
+    if (sub == NULL) {
         queue->subscribers_head = (Subscriber *)malloc(sizeof(Subscriber));
-        temp = queue->subscribers_head;
+        sub = queue->subscribers_head;
     } else {
-        while (temp->next != NULL) {
-            temp = temp->next;
+        if (pthread_equal(sub->thread, thread)) {
+                pthread_mutex_unlock(&queue->mutex);
+                return;
+            }
+        while (sub->next != NULL) {
+            if (pthread_equal(sub->thread, thread)) {
+                pthread_mutex_unlock(&queue->mutex);
+                return;
+            }
+            sub = sub->next;
         }
-        temp->next = (Subscriber *)malloc(sizeof(Subscriber));
-        temp = temp->next;
+        sub->next = (Subscriber *)malloc(sizeof(Subscriber));
+        sub = sub->next;
     }
-    
-    temp->thread = thread;
-    temp->read_position = queue->tail;
-    temp->new_messages = 0;
-    temp->next = NULL;
+
+    sub->thread = thread;
+    sub->new_messages = 0;
+    sub->next = NULL;
 
     queue->subscriber_count++;
 
@@ -70,21 +81,25 @@ void subscribe(TQueue *queue, pthread_t thread) {
 void unsubscribe(TQueue *queue, pthread_t thread) {
     pthread_mutex_lock(&queue->mutex);
 
-    Subscriber *temp = queue->subscribers_head;
-    if (pthread_equal(temp->thread, thread)) {
-        queue->subscribers_head = temp->next;
-        free(temp);
+    Subscriber *sub = queue->subscribers_head;
+    if (!sub) {
+        pthread_mutex_unlock(&queue->mutex);
+        return;
+    }
+    if (pthread_equal(sub->thread, thread)) {
+        queue->subscribers_head = sub->next;
+        free(sub);
         queue->subscriber_count--;
     } else {
-        while (temp->next != NULL) {
-            if (pthread_equal(temp->next->thread, thread)) {
-                Subscriber *next = temp->next->next;
-                free(temp->next);
-                temp->next = next;
+        while (sub->next != NULL) {
+            if (pthread_equal(sub->next->thread, thread)) {
+                Subscriber *next = sub->next->next;
+                free(sub->next);
+                sub->next = next;
                 queue->subscriber_count--;
                 break;
             }
-            temp = temp->next;
+            sub = sub->next;
         }
     }
 
@@ -97,18 +112,30 @@ void addMsg(TQueue *queue, void *msg) {
     while (queue->size == queue->capacity) {
         pthread_cond_wait(&queue->not_full, &queue->mutex);
     }
-
-    Message *message = &(queue->messages[queue->tail]);
-    message->data = msg;
-    message->undelivered = queue->subscriber_count;
-
-    Subscriber* temp = queue->subscribers_head;
-    while (temp != NULL) {
-        temp->new_messages++;
-        temp = temp->next;
+    
+    Message* mess = queue->messages_head;
+    if (mess == NULL) {
+        queue->messages_head = (Message *)malloc(sizeof(Message));
+        mess = queue->messages_head;
+    } else {
+        while (mess->next != NULL) {
+            mess = mess->next;
+        }
+        mess->next = (Message *)malloc(sizeof(Message));
+        mess = mess->next;
     }
 
-    queue->tail = (queue->tail + 1) % queue->capacity;
+    mess->data = msg;
+    mess->undelivered = queue->subscriber_count;
+    mess->next = NULL;
+
+    Subscriber* sub = queue->subscribers_head;
+    int i = 0;
+    while (sub != NULL) {
+        sub->new_messages++;
+        sub = sub->next;
+    }
+
     queue->size++;
 
     pthread_cond_broadcast(&queue->not_empty);
@@ -118,48 +145,63 @@ void addMsg(TQueue *queue, void *msg) {
 void *getMsg(TQueue *queue, pthread_t thread) {
     pthread_mutex_lock(&queue->mutex);
 
-    Subscriber *subscriber = NULL;
+    // Look for subscriber
+    Subscriber *sub = NULL;
     Subscriber *temp = queue->subscribers_head;
     if (temp != NULL) {
         if (pthread_equal(temp->thread, thread)) {
-            subscriber = temp;
+            sub = temp;
         } else {
             while (temp->next != NULL) {
                 temp = temp->next;
                 if (pthread_equal(temp->thread, thread)) {
-                    subscriber = temp;
+                    sub = temp;
                     break;
                 }
             }
         }
     }
-    if (!subscriber) {
+    if (sub == NULL) {
         pthread_mutex_unlock(&queue->mutex);
         return NULL;
     }
 
-    if (subscriber->new_messages == 0) {
+    // Wait if no new messages_head
+    if (sub->new_messages == 0) {
         pthread_cond_wait(&queue->not_empty, &queue->mutex);
     }
-    
-    int index = subscriber->read_position;
-    
-    queue->messages[index].undelivered--;
+    // Find least recent message
+    Message* message = queue->messages_head;
+    Message* prev = NULL;
+    int index = queue->size - sub->new_messages;
 
-    if (queue->messages[index].undelivered == 0) {
-        queue->head = (queue->head + 1) % queue->capacity;
+    for (int i = 0; i < index; i++) {
+        prev = message;
+        message = message->next;
+    }
+
+
+    void *msg = message->data;
+
+    // Remove message if all subscribers received it
+    message->undelivered--;
+    if (message->undelivered == 0) {
+        if (prev == NULL) {
+            queue->messages_head = message->next;
+        } else {
+            prev->next = message->next;
+        }
+
         queue->size--;
+        free(message);
         pthread_cond_signal(&queue->not_full);
     }
-    
 
-    subscriber->read_position = (subscriber->read_position + 1) % queue->capacity;
-    subscriber->new_messages--;
-    void *msg = queue->messages[index].data;
+    sub->new_messages--;
 
     pthread_mutex_unlock(&queue->mutex);
+    
     return msg;
-        
 }
 
 
@@ -167,28 +209,28 @@ int getAvailable(TQueue *queue, pthread_t thread) {
     pthread_mutex_lock(&queue->mutex);
 
     Subscriber *temp = queue->subscribers_head;
-    Subscriber *subscriber = NULL;
+    Subscriber *sub = NULL;
 
     if (temp != NULL) {
         if (pthread_equal(temp->thread, thread)) {
-            subscriber = temp;
+            sub = temp;
         } else {
             while (temp->next != NULL) {
                 temp = temp->next;
                 if (pthread_equal(temp->thread, thread)) {
-                    subscriber = temp;
+                    sub = temp;
                     break;
                 }
             }
         }
     }
 
-    if (!subscriber) {
+    if (!sub) {
         pthread_mutex_unlock(&queue->mutex);
         return 0;
     }
 
-    int count = subscriber->new_messages;
+    int count = sub->new_messages;
 
     pthread_mutex_unlock(&queue->mutex);
 
@@ -200,24 +242,24 @@ void setSize(TQueue *queue, int size) {
 
     if (size < queue->size) {
         int to_remove = queue->size - size;
-
         for (int i = 0; i < to_remove; i++) {
-            Subscriber* temp = queue->subscribers_head;
-
-            while (temp != NULL) {
-                if (queue->head == temp->read_position) {
-                    temp->read_position = (temp->read_position + 1) % queue->capacity;
-                    temp->new_messages--;
-                }
-                temp = temp->next;
-            }
-
-            queue->head = (queue->head + 1) % queue->capacity;
+            Message* message = queue->messages_head;
+            queue->messages_head = queue->messages_head->next;
+            free(message);
             queue->size--;
         }
+
+        Subscriber* subscriber = queue->subscribers_head;
+        while (subscriber != NULL) {
+            if (subscriber->new_messages > size) {
+                subscriber->new_messages = size;
+            }
+            subscriber = subscriber->next;
+        }
+    } else if (size > queue->size) {
+        pthread_cond_signal(&queue->not_full);
     }
 
-    queue->messages = (Message *)realloc(queue->messages, size * sizeof(Message));
     queue->capacity = size;
     
     pthread_mutex_unlock(&queue->mutex);

@@ -21,18 +21,15 @@ typedef struct Message {
 
 typedef struct Subscriber {
     pthread_t thread;
-    int read_position;
     int new_messages;
     struct Subscriber* next;
 } Subscriber;
 
 // Struktura kolejki
 typedef struct TQueue {
-    Message *messages;
+    Message *messages_head;
     int capacity;
     int size;
-    int head;
-    int tail;
     Subscriber *subscribers_head;
     int subscriber_count;
     pthread_mutex_t mutex;
