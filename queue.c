@@ -161,7 +161,6 @@ void addMsg(TQueue *queue, void *msg) {
     mess->next = NULL;
 
     Subscriber* sub = queue->subscribers_head;
-    int i = 0;
     while (sub != NULL) {
         sub->new_messages++;
         sub = sub->next;

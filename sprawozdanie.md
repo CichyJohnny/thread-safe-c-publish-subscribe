@@ -30,7 +30,12 @@ typedef struct TQueue {
 } TQueue;
 ```
 
-Składa się ona z charakterystycznych atrybutów okres rozmiar i pojemność kolejki, mutex'a oraz zmiennych warunkowych blokujących liste pustą lub pełną oraz wskaźników do głów dwóch list.
+Składa się ona z charakterystycznych atrybutów takich jak:
+
+* pojemność kolejki i jej aktualny rozmiar
+* muteksa
+* dwóch zmiennych warunkowych blokujących listę pustą lub pełną
+* wskaźników do głów dwóch początków obu list.
 
 Pierwsza z list to dynamiczna lista (Singly Linked List) przechowujaca wiadomości wysłane za pośrednictwem kolejki. Składa się ona z elementów zaimplementowanych w strukturze Message:
 
@@ -59,14 +64,16 @@ Zadanie zostało skontruowane w pełni przy pomocy wzorców funkcji podanych w t
 # Algorytm
 
 Podczas testowano wykryto i naprawiono sytuacje skrajne:
-* próba ponownego zasubskrybowania kolejki przez ten sam wątek
+
+* próba ponownego subskrybowania kolejki przez ten sam wątek
 * dostęp do funkcji przez wątek któty nie subskrybuje kolejki
 * wpływ funkcji setSize() na wiadomości, subskrybentów oraz czekające wątki
 * dodawanie wiadomości do kolejki bez subskrybentów
-* wpływ odsubskrybowania na ilość wiadomości
+* wpływ anulowania subskrybcji na ilość wiadomości
 
 
 Odporność algorytmu na typowe problemy przetwarzania współbieżnego:
+
 * Aktywne czekanie - użyto zmiennych warunkowych które zamiast aktywnej pętli zostają uśpione w oczekiwaniu na sygnał od wątku udostępniającego zasoby
 * Zakleszczenie - dwie funkcje addMsg oraz getMsg wykluczają problem zakleszczenia, tzn. w przypadku zablokowania wątku wywołującego addMsg, funkcja getMsg zwalnia dla niego zasoby, jak i przy zablokowania wątku wywołującego getMsg, addMsg udostępnia mu zasoby - nie istnieje sytuacja wzajemnego zakleszczenia
 

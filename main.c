@@ -5,6 +5,10 @@
 #include <unistd.h>
 #include "queue.h"
 
+void* dummy(void *args) {
+    return NULL;
+}
+
 bool initTest() {
     TQueue *queue = createQueue(10);
     if (queue == NULL) {
@@ -43,6 +47,10 @@ bool subscribeTest() {
 bool multipleSubscribersTest() {
     TQueue *queue = createQueue(10);
     pthread_t thread1, thread2, thread3;
+    pthread_create(&thread1, NULL, dummy, NULL);
+    pthread_create(&thread2, NULL, dummy, NULL);
+    pthread_create(&thread3, NULL, dummy, NULL);
+
     subscribe(queue, thread1);
     subscribe(queue, thread2);
     subscribe(queue, thread3);
@@ -124,6 +132,10 @@ bool subscribeSelfTwice() {
 bool unsubscribeTest() {
     TQueue *queue = createQueue(10);
     pthread_t thread1, thread2, thread3;
+    pthread_create(&thread1, NULL, dummy, NULL);
+    pthread_create(&thread2, NULL, dummy, NULL);
+    pthread_create(&thread3, NULL, dummy, NULL);
+
     subscribe(queue, thread1);
     subscribe(queue, thread2);
     subscribe(queue, thread3);
@@ -178,6 +190,7 @@ bool messagesAfterUnsubscribe() {
     }
 
     pthread_t thread1;
+    pthread_create(&thread1, NULL, dummy, NULL);
     subscribe(queue, thread1);
 
     addMsg(queue, msg1);
@@ -191,7 +204,9 @@ bool messagesAfterUnsubscribe() {
         return false;
     }
 
-    pthread_t thread2, thread3;
+    pthread_t thread2;
+    pthread_create(&thread2, NULL, dummy, NULL);
+
     subscribe(queue, thread1);
     subscribe(queue, thread2);
 
@@ -421,6 +436,9 @@ bool overflowTest() {
 bool subscriberNotFoundTest() {
     TQueue *queue = createQueue(10);
     pthread_t subscriber, not_subscriber;
+    pthread_create(&subscriber, NULL, dummy, NULL);
+    pthread_create(&not_subscriber, NULL, dummy, NULL);
+
     subscribe(queue, subscriber);
 
     int *msg = malloc(sizeof(int));
@@ -576,8 +594,6 @@ bool multipleReceiverTest() {
     pthread_join(receiver4, &received4);
 
     for (int i = 0; i<10; i++) {
-        int a = ((int*)received3)[i];
-        int b = ((int*)received4)[i];
         if (((int*)received3)[i] != (i + 1) * 10 || ((int*)received4)[i] != (i + 1) * 10) {
             free(received3);
             free(received4);
@@ -615,6 +631,8 @@ bool setSizeTest() {
 bool decreaseSetSize() {
     TQueue *queue = createQueue(4);
     pthread_t thread1, thread2;
+    pthread_create(&thread1, NULL, dummy, NULL);
+    pthread_create(&thread2, NULL, dummy, NULL);
 
     int *msg1 = malloc(sizeof(int));
     *msg1 = 10;
@@ -695,6 +713,8 @@ void *increaseSetSizeTest_sender(void *args) {
     free(msg1);
     free(msg2);
     free(msg3);
+
+    return NULL;
 }
 
 bool increaseSetSizeTest() {
@@ -730,26 +750,6 @@ bool increaseSetSizeTest() {
     return true;
 }
 
-void* deadLockTest_sender(void* args) {
-    TQueue *queue = (TQueue*)args;
-
-    int *msg1 = malloc(sizeof(int));
-    *msg1 = 10;
-
-    usleep(1000);
-    printf("sending\n");
-    addMsg(queue, msg1);
-    printf("sent\n");
-}
-
-void* deadLockTest_subscriber(void* args) {
-    TQueue *queue = (TQueue*)args;
-    subscribe(queue, pthread_self());
-
-    printf("receiving\n");
-    getMsg(queue, pthread_self());
-    printf("received\n");
-}
 
 int main() {
     if (!initTest()) {
