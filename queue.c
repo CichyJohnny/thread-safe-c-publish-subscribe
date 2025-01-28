@@ -267,6 +267,46 @@ int getAvailable(TQueue *queue, pthread_t thread) {
     return count;
 }
 
+void removeMsg(TQueue *queue, void *msg) {
+    pthread_mutex_lock(&queue->mutex);
+
+    Message* mess = queue->messages_head;
+    Message* prev = NULL;
+
+    int index = 0;
+    while (mess != NULL) {
+        if (mess->data == msg) {
+
+            if (prev == NULL) {
+                queue->messages_head = mess->next;
+            } else {
+                prev->next = mess->next;
+            }
+
+            queue->size--;
+            free(mess);
+            pthread_cond_signal(&queue->not_full);
+            
+            break;
+        }
+
+        prev = mess;
+        mess = mess->next;
+        index++;
+    }
+
+    Subscriber* sub = queue->subscribers_head;
+    while (sub != NULL) {
+        if (queue->size + 1 - sub->new_messages <= index) {
+            sub->new_messages--;
+        }
+        sub = sub->next;
+    }
+
+    pthread_mutex_unlock(&queue->mutex);
+}
+
+
 void setSize(TQueue *queue, int size) {
     pthread_mutex_lock(&queue->mutex);
 

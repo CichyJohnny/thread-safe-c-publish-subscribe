@@ -750,6 +750,337 @@ bool increaseSetSizeTest() {
     return true;
 }
 
+bool removeMsgTest() {
+    TQueue *queue = createQueue(10);
+    subscribe(queue, pthread_self());
+
+    int *msg1 = malloc(sizeof(int));
+    *msg1 = 10;
+    int *msg2 = malloc(sizeof(int));
+    *msg2 = 20;
+    int *msg3 = malloc(sizeof(int));
+    *msg3 = 30;
+
+    addMsg(queue, msg1);
+    addMsg(queue, msg2);
+    addMsg(queue, msg3);
+
+    removeMsg(queue, msg2);
+
+    if (queue->size != 2) {
+        printf("1\n");
+        free(msg1);
+        free(msg2);
+        free(msg3);
+        destroyQueue(queue);
+        return false;
+    }
+    if (getAvailable(queue, pthread_self()) != 2) {
+        printf("2\n");
+        printf("%d\n", getAvailable(queue, pthread_self()));
+        free(msg1);
+        free(msg2);
+        free(msg3);
+        destroyQueue(queue);
+        return false;
+    }
+    if (queue->messages_head->data != msg1 || queue->messages_head->next->data != msg3) {
+        printf("3\n");
+        free(msg1);
+        free(msg2);
+        free(msg3);
+        destroyQueue(queue);
+        return false;
+    }
+    
+    removeMsg(queue, msg1);
+    removeMsg(queue, msg3);
+
+    if (getAvailable(queue, pthread_self()) != 0) {
+        printf("4\n");
+        free(msg1);
+        free(msg2);
+        free(msg3);
+        destroyQueue(queue);
+        return false;
+    }
+
+    if (queue->size != 0 || queue->messages_head != NULL) {
+        printf("5\n");
+        free(msg1);
+        free(msg2);
+        free(msg3);
+        destroyQueue(queue);
+        return false;
+    }
+
+    free(msg1);
+    free(msg2);
+    free(msg3);
+    destroyQueue(queue);
+
+    return true;
+}
+
+bool removeMsgManySubscribers() {
+    TQueue *queue = createQueue(10);
+    pthread_t thread1, thread2, thread3, thread4;
+    pthread_create(&thread1, NULL, dummy, NULL);
+    pthread_create(&thread2, NULL, dummy, NULL);
+    pthread_create(&thread3, NULL, dummy, NULL);
+    pthread_create(&thread4, NULL, dummy, NULL);
+
+    int *msg1 = malloc(sizeof(int));
+    *msg1 = 10;
+    int *msg2 = malloc(sizeof(int));
+    *msg2 = 20;
+    int *msg3 = malloc(sizeof(int));
+    *msg3 = 30;
+    int *msg4 = malloc(sizeof(int));
+    *msg4 = 40;
+    int *msg5 = malloc(sizeof(int));
+    *msg5 = 50;
+
+    subscribe(queue, thread1);
+    addMsg(queue, msg1);
+    addMsg(queue, msg2);
+
+    subscribe(queue, thread2);
+    addMsg(queue, msg3);
+
+    subscribe(queue, thread3);
+    addMsg(queue, msg4);
+
+    subscribe(queue, thread4);
+    addMsg(queue, msg5);
+
+    if (queue->size != 5) {
+        printf("1\n");
+        free(msg1);
+        free(msg2);
+        free(msg3);
+        free(msg4);
+        free(msg5);
+        destroyQueue(queue);
+        return false;
+    }
+    if (getAvailable(queue, thread1) != 5 || getAvailable(queue, thread2) != 3 || getAvailable(queue, thread3) != 2 || getAvailable(queue, thread4) != 1) {
+        printf("2\n");
+        free(msg1);
+        free(msg2);
+        free(msg3);
+        free(msg4);
+        free(msg5);
+        destroyQueue(queue);
+        return false;
+    }
+
+    removeMsg(queue, msg4);
+
+    if (queue->size != 4) {
+        printf("3\n");
+        free(msg1);
+        free(msg2);
+        free(msg3);
+        free(msg4);
+        free(msg5);
+        destroyQueue(queue);
+        return false;
+    }
+    if (getAvailable(queue, thread1) != 4 || getAvailable(queue, thread2) != 2 || getAvailable(queue, thread3) != 1 || getAvailable(queue, thread4) != 1) {
+        printf("4\n");
+        free(msg1);
+        free(msg2);
+        free(msg3);
+        free(msg4);
+        free(msg5);
+        destroyQueue(queue);
+        return false;
+    }
+
+    int *a1 = (int*)getMsg(queue, thread1);
+    int *b1 = (int*)getMsg(queue, thread1);
+    int *c1 = (int*)getMsg(queue, thread1);
+    int *d1 = (int*)getMsg(queue, thread1);
+
+    if (*a1 != 10 || *b1 != 20 || *c1 != 30 || *d1 != 50) {
+        printf("5\n");
+        free(msg1);
+        free(msg2);
+        free(msg3);
+        free(msg4);
+        free(msg5);
+        destroyQueue(queue);
+        return false;
+    }
+
+    int *a2 = (int*)getMsg(queue, thread2);
+    int *b2 = (int*)getMsg(queue, thread2);
+    
+    if (*a2 != 30 || *b2 != 50) {
+        printf("6\n");
+        free(msg1);
+        free(msg2);
+        free(msg3);
+        free(msg4);
+        free(msg5);
+        destroyQueue(queue);
+        return false;
+    }
+
+    int *a3 = (int*)getMsg(queue, thread3);
+    if (*a3 != 50) {
+        printf("7\n");
+        free(msg1);
+        free(msg2);
+        free(msg3);
+        free(msg4);
+        free(msg5);
+        destroyQueue(queue);
+        return false;
+    }
+
+    int *a4 = (int*)getMsg(queue, thread4);
+    if (*a4 != 50) {
+        printf("8\n");
+        free(msg1);
+        free(msg2);
+        free(msg3);
+        free(msg4);
+        free(msg5);
+        destroyQueue(queue);
+        return false;
+    }
+
+    if (getAvailable(queue, thread1) != 0 || getAvailable(queue, thread2) != 0 || getAvailable(queue, thread3) != 0 || getAvailable(queue, thread4) != 0) {
+        printf("9\n");
+        free(msg1);
+        free(msg2);
+        free(msg3);
+        free(msg4);
+        free(msg5);
+        destroyQueue(queue);
+        return false;
+    }
+
+    if (queue->size != 0 || queue->messages_head != NULL) {
+        printf("10\n");
+        free(msg1);
+        free(msg2);
+        free(msg3);
+        free(msg4);
+        free(msg5);
+        destroyQueue(queue);
+        return false;
+    }
+
+    free(msg1);
+    free(msg2);
+    free(msg3);
+    free(msg4);
+    free(msg5);
+    destroyQueue(queue);
+
+    return true;
+}
+
+typedef struct Args3 {
+    TQueue *queue;
+    int *msg1;
+    int *msg2;
+    int *msg3;
+} Args3;
+
+
+void* removeMsgWithWaitingSender_sender(void *args) {
+    Args3 *arg = (Args3*)args;
+    subscribe(arg->queue, pthread_self());
+
+    TQueue *queue = arg->queue;
+    int *msg1 = arg->msg1;
+    int *msg2 = arg->msg2;
+    int *msg3 = arg->msg3;
+
+    addMsg(queue, msg1);
+    addMsg(queue, msg2);
+    addMsg(queue, msg3);
+
+    return NULL;
+}
+
+bool removeMsgWithWaitingSender() {
+    TQueue *queue = createQueue(1);
+    subscribe(queue, pthread_self());
+
+    Args3 *arg = malloc(sizeof(Args3));
+    arg->queue = queue;
+    arg->msg1 = malloc(sizeof(int));
+    *(arg->msg1) = 10;
+    arg->msg2 = malloc(sizeof(int));
+    *(arg->msg2) = 20;
+    arg->msg3 = malloc(sizeof(int));
+    *(arg->msg3) = 30;
+
+    pthread_t sender;
+    pthread_create(&sender, NULL, removeMsgWithWaitingSender_sender, arg);
+
+    usleep(10000);
+
+    int* aa = (int*)getMsg(queue, pthread_self());
+    if (queue->size != 1 || getAvailable(queue, sender) != 1 || *aa != 10) {
+        printf("1\n");
+        free(arg->msg1);
+        free(arg->msg2);
+        free(arg->msg3);
+        free(arg);
+        destroyQueue(queue);
+        return false;
+    }
+
+    removeMsg(queue, arg->msg1);
+
+    usleep(10000);
+
+    int* bb = (int*)getMsg(queue, pthread_self());
+    if (queue->size != 1 || getAvailable(queue, sender) != 1 || *bb != 20) {
+        printf("2\n");
+        free(arg->msg1);
+        free(arg->msg2);
+        free(arg->msg3);
+        free(arg);
+        destroyQueue(queue);
+        return false;
+    }
+
+    removeMsg(queue, arg->msg2);
+
+    usleep(10000);
+
+    int* cc = (int*)getMsg(queue, pthread_self());
+    if (queue->size != 1 || getAvailable(queue, sender) != 1 || *cc != 30) {
+        printf("3\n");
+        free(arg->msg1);
+        free(arg->msg2);
+        free(arg->msg3);
+        free(arg);
+        destroyQueue(queue);
+        return false;
+    }
+
+    removeMsg(queue, arg->msg3);
+    if (queue->size != 0 || getAvailable(queue, sender) != 0) {
+        printf("4\n");
+        free(arg->msg1);
+        free(arg->msg2);
+        free(arg->msg3);
+        free(arg);
+        destroyQueue(queue);
+        return false;
+    }
+
+    return true;
+}
+
 
 int main() {
     if (!initTest()) {
@@ -832,6 +1163,21 @@ int main() {
         return 1;
     }
     printf("increaseSetSizeTest passed\n");
+    if (!removeMsgTest()) {
+        printf("removeMsgTest failed\n");
+        return 1;
+    }
+    printf("removeMsgTest passed\n");
+    if (!removeMsgManySubscribers()) {
+        printf("removeMsgManySubscribers failed\n");
+        return 1;
+    }
+    printf("removeMsgManySubscribers passed\n");
+    if (!removeMsgWithWaitingSender()) {
+        printf("removeMsgWithWaitingSender failed\n");
+        return 1;
+    }
+    printf("removeMsgWithWaitingSender passed\n");
     
     return 0;
 }
