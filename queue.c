@@ -97,7 +97,7 @@ void unsubscribe(TQueue *queue, pthread_t thread) {
     } else {
         while (sub->next != NULL) {
             if (pthread_equal(sub->next->thread, thread)) {
-                index = queue->size - sub->new_messages;
+                index = queue->size - sub->next->new_messages;
 
                 Subscriber *next = sub->next->next;
                 free(sub->next);
@@ -196,7 +196,7 @@ void *getMsg(TQueue *queue, pthread_t thread) {
         return NULL;
     }
 
-    // Wait if no new messages_head
+    // Wait if no new messages
     if (sub->new_messages == 0) {
         pthread_cond_wait(&queue->not_empty, &queue->mutex);
     }
