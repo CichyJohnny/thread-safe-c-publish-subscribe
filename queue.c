@@ -24,7 +24,7 @@ TQueue *createQueue(int size) {
 }
 
 void destroyQueue(TQueue *queue) {
-    pthread_mutex_destroy(&queue->mutex);
+    pthread_mutex_lock(&queue->mutex);
     pthread_cond_destroy(&queue->not_full);
     pthread_cond_destroy(&queue->not_empty);
 
@@ -42,6 +42,9 @@ void destroyQueue(TQueue *queue) {
         mess = next;
     }
 
+    pthread_mutex_unlock(&queue->mutex);
+    pthread_mutex_destroy(&queue->mutex);
+
     free(queue);
 }
 
@@ -49,31 +52,33 @@ void subscribe(TQueue *queue, pthread_t thread) {
     pthread_mutex_lock(&queue->mutex);
 
     Subscriber* sub = queue->subscribers_head;
-    if (sub == NULL) {
-        queue->subscribers_head = (Subscriber *)malloc(sizeof(Subscriber));
-        sub = queue->subscribers_head;
-    } else {
+
+    // Sprawdź czy wątek już istnieje
+    while (sub != NULL) {
         if (pthread_equal(sub->thread, thread)) {
-                pthread_mutex_unlock(&queue->mutex);
-                return;
-            }
-        while (sub->next != NULL) {
-            if (pthread_equal(sub->thread, thread)) {
-                pthread_mutex_unlock(&queue->mutex);
-                return;
-            }
-            sub = sub->next;
+            pthread_mutex_unlock(&queue->mutex);
+            return;
         }
-        sub->next = (Subscriber *)malloc(sizeof(Subscriber));
         sub = sub->next;
     }
 
-    sub->thread = thread;
-    sub->new_messages = 0;
-    sub->next = NULL;
+    // Dodaj nowy Subscriber na koniec listy
+    Subscriber* new_sub = (Subscriber *)malloc(sizeof(Subscriber));
+    new_sub->thread = thread;
+    new_sub->new_messages = 0;
+    new_sub->next = NULL;
+
+    if (queue->subscribers_head == NULL) {
+        queue->subscribers_head = new_sub;
+    } else {
+        sub = queue->subscribers_head;
+        while (sub->next != NULL) {
+            sub = sub->next;
+        }
+        sub->next = new_sub;
+    }
 
     queue->subscriber_count++;
-
     pthread_mutex_unlock(&queue->mutex);
 }
 
@@ -82,7 +87,7 @@ void unsubscribe(TQueue *queue, pthread_t thread) {
     pthread_mutex_lock(&queue->mutex);
 
     Subscriber *sub = queue->subscribers_head;
-    int index = 0;
+    int index = -1;
     if (!sub) {
         pthread_mutex_unlock(&queue->mutex);
         return;
@@ -109,24 +114,40 @@ void unsubscribe(TQueue *queue, pthread_t thread) {
         }
     }
 
-    Message* message = queue->messages_head;
+    if (index == -1) {
+        pthread_mutex_unlock(&queue->mutex);
+        return;
+    }
 
-    for (int i = 0; i < queue->size; i++) {
-        if (i >= index) {
-            message->undelivered--;
-            if (message->undelivered == 0) {
-                Message* to_remove = message;
-                queue->messages_head = message->next;
-                message = queue->messages_head;
+
+    Message* current = queue->messages_head;
+    Message* prev = NULL;
+    int count = 0;
+
+    while (current != NULL) {
+        if (count >= index) {
+            current->undelivered--;
+            if (current->undelivered == 0) {
+                if (prev == NULL) {
+                    queue->messages_head = current->next;
+                } else {
+                    prev->next = current->next;
+                }
+
+                Message* to_remove = current;
+                current = current->next;
+
                 free(to_remove);
-
                 queue->size--;
-            } else {
-                message = message->next;
+
+                pthread_cond_signal(&queue->not_full);
+
+                continue;
             }
-        } else {
-            message = message->next;
         }
+        prev = current;
+        current = current->next;
+        count++;
     }
 
     pthread_mutex_unlock(&queue->mutex);
@@ -274,6 +295,7 @@ void removeMsg(TQueue *queue, void *msg) {
     Message* prev = NULL;
 
     int index = 0;
+    int found = 0;
     while (mess != NULL) {
         if (mess->data == msg) {
 
@@ -286,6 +308,8 @@ void removeMsg(TQueue *queue, void *msg) {
             queue->size--;
             free(mess);
             pthread_cond_signal(&queue->not_full);
+
+            found = 1;
             
             break;
         }
@@ -293,6 +317,11 @@ void removeMsg(TQueue *queue, void *msg) {
         prev = mess;
         mess = mess->next;
         index++;
+    }
+
+    if (found == 0) {
+        pthread_mutex_unlock(&queue->mutex);
+        return;
     }
 
     Subscriber* sub = queue->subscribers_head;
