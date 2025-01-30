@@ -126,6 +126,36 @@ bool subscribeSelfTwice() {
 
     destroyQueue(queue);
 
+    TQueue *queue2 = createQueue(10);
+    pthread_t thread1, thread2, thread3;
+    pthread_create(&thread1, NULL, dummy, NULL);
+    pthread_create(&thread2, NULL, dummy, NULL);
+    pthread_create(&thread3, NULL, dummy, NULL);
+
+    subscribe(queue2, thread1);
+    subscribe(queue2, thread2);
+    subscribe(queue2, thread3);
+    subscribe(queue2, thread3);
+
+    if (queue2->subscriber_count != 3) {
+        printf("5\n");
+        printf("%d instead of 3\n", queue2->subscriber_count);
+        destroyQueue(queue2);
+        return false;
+    }
+    if (!pthread_equal(queue2->subscribers_head->thread, thread1)
+    || !pthread_equal(queue2->subscribers_head->next->thread, thread2) 
+    || !pthread_equal(queue2->subscribers_head->next->next->thread, thread3)) {
+        printf("6\n");
+        printf("%d instead of 1\n", pthread_equal(queue2->subscribers_head->thread, thread1));
+        printf("%d instead of 1\n", pthread_equal(queue2->subscribers_head->next->thread, thread2));
+        printf("%d instead of 1\n", pthread_equal(queue2->subscribers_head->next->next->thread, thread3));
+        destroyQueue(queue2);
+        return false;
+    }
+
+    destroyQueue(queue2);
+
     return true;
 }
 
@@ -170,6 +200,70 @@ bool unsubscribeTest() {
         return false;
     }
 
+    destroyQueue(queue);
+
+    return true;
+}
+
+void* unsubscribeAwakesAddMsg_sender(void* args) {
+    TQueue *queue = (TQueue *)args;
+
+    int *msg = malloc(sizeof(int));
+    *msg = 30;
+    addMsg(queue, msg);
+
+    return NULL;
+}
+
+
+bool unsubscribeAwakesAddMsg() {
+    TQueue *queue = createQueue(2);
+
+    subscribe(queue, pthread_self());
+
+    int *msg1 = malloc(sizeof(int));
+    *msg1 = 10;
+    int *msg2 = malloc(sizeof(int));
+    *msg2 = 20;
+
+    addMsg(queue, msg1);
+    addMsg(queue, msg2);
+
+    pthread_t sender;
+    pthread_create(&sender, NULL, unsubscribeAwakesAddMsg_sender, queue);
+
+    usleep(10000);
+
+    unsubscribe(queue, pthread_self());
+
+    usleep(10000);
+
+    if (queue->subscriber_count != 0 || queue->subscribers_head != NULL) {
+        printf("1\n");
+        destroyQueue(queue);
+        free(msg1);
+        free(msg2);
+        return false;
+    }
+    if (queue->size != 1) {
+        printf("2\n");
+        printf("%d instead of 1\n", queue->size);
+        destroyQueue(queue);
+        free(msg1);
+        free(msg2);
+        return false;
+    }
+
+    if (*(int*)(queue->messages_head->data) != 30) {
+        printf("3\n");
+        destroyQueue(queue);
+        free(msg1);
+        free(msg2);
+        return false;
+    }
+
+    free(msg1);
+    free(msg2);
     destroyQueue(queue);
 
     return true;
@@ -235,6 +329,56 @@ bool messagesAfterUnsubscribe() {
 
     destroyQueue(queue);
     free(msg1);
+
+
+    TQueue *queue2 = createQueue(10);
+
+    pthread_t thread3, thread4;
+    pthread_create(&thread3, NULL, dummy, NULL);
+    pthread_create(&thread4, NULL, dummy, NULL);
+
+    subscribe(queue2, thread3);
+
+    int *msg2 = malloc(sizeof(int));
+    *msg2 = 20;
+    addMsg(queue2, msg2);
+
+    unsubscribe(queue2, thread4);
+
+    if (getAvailable(queue2, thread3) != 1 || queue2->size != 1) {
+        printf("5\n");
+        printf("%d instead of 1\n", getAvailable(queue2, thread3));
+        printf("%d instead of 1\n", queue2->size);
+        destroyQueue(queue2);
+        free(msg2);
+        return false;
+    }
+
+    if (queue2->subscriber_count != 1) {
+        printf("6\n");
+        destroyQueue(queue2);
+        free(msg2);
+        return false;
+    }
+
+    if (queue2->messages_head->undelivered != 1 || queue2->messages_head->data != msg2) {
+        printf("7\n");
+        destroyQueue(queue2);
+        free(msg2);
+        return false;
+    }
+
+    if (queue2->subscribers_head->new_messages != 1 || !pthread_equal(queue2->subscribers_head->thread, thread3)) {
+        printf("8\n");
+        printf("%d instead of 1\n", queue2->subscribers_head->new_messages);
+        printf("%d instead of 1\n", pthread_equal(queue2->subscribers_head->thread, thread3));
+        destroyQueue(queue2);
+        free(msg2);
+        return false;
+    }
+
+    destroyQueue(queue2);
+    free(msg2);
 
     return true;
 }
@@ -1081,6 +1225,77 @@ bool removeMsgWithWaitingSender() {
     return true;
 }
 
+typedef struct longTest_args {
+    TQueue *queue;
+    int toRead;
+} longTest_args;
+
+void* longTest_receiver(void* args) {
+    longTest_args *arg = (longTest_args*)args;
+    TQueue *queue = arg->queue;
+    int toRead = arg->toRead;
+
+    subscribe(queue, pthread_self());
+
+    for (int i = 0; i<toRead; i++) {
+        int *msg = (int*)getMsg(queue, pthread_self());
+        if (msg == NULL || *msg != 100 - toRead + i + 1) {
+            printf("%d - %d instead of %d\n", i, *msg, 100 - toRead + i + 1);
+
+            // return NULL;
+        }
+    }
+
+    return NULL;
+}
+
+void* longTest_sender(void* args) {
+    TQueue *queue = (TQueue*)args;
+
+    longTest_args *largs[10];
+    pthread_t receivers[10];
+    int *msgs[100];
+
+    for (int i = 0; i<10; i++) {
+        largs[i] = (longTest_args*)malloc(sizeof(longTest_args));
+        largs[i]->queue = queue;
+        largs[i]->toRead = 100 - i * 10;
+
+        pthread_create(&receivers[i], NULL, longTest_receiver, largs[i]);
+
+        usleep(10000);
+
+        for (int j = 0; j<10; j++) {
+            msgs[i * 10 + j] = (int*)malloc(sizeof(int));
+            *msgs[i * 10 + j] = i * 10 + j + 1;
+            addMsg(queue, msgs[i * 10 + j]);
+        }
+    }
+
+    for (int i = 0; i<10; i++) {
+        pthread_join(receivers[i], NULL);
+    }
+    for (int i = 0; i<100; i++) {
+        free(msgs[i]);
+    }
+    for (int i = 0; i<10; i++) {
+        free(largs[i]);
+    }
+
+    return NULL;
+}
+
+bool longTest() {
+    TQueue *queue = createQueue(20);
+
+    pthread_t sender;
+    pthread_create(&sender, NULL, longTest_sender, queue);
+
+    pthread_join(sender, NULL);
+
+    return true;
+}
+
 
 int main() {
     if (!initTest()) {
@@ -1118,6 +1333,11 @@ int main() {
         return 1;
     }
     printf("unsubscribeFromEmptyTest passed\n");
+    if (!unsubscribeAwakesAddMsg()) {
+        printf("unsubscribeAwakesAddMsg failed\n");
+        return 1;
+    }
+    printf("unsubscribeAwakesAddMsg passed\n");
     if (!addMsgTest()) {
         printf("addMsgTest failed\n");
         return 1;
@@ -1178,6 +1398,10 @@ int main() {
         return 1;
     }
     printf("removeMsgWithWaitingSender passed\n");
+    if (!longTest()) {
+        printf("longTest failed\n");
+    }
+    printf("longTest passed\n");
     
     return 0;
 }
